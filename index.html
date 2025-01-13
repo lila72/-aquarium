@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Boid Swarm</title>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        canvas {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+
+		function resizeCanvas() {
+			canvas.width = window.innerWidth;
+			canvas.height = window.innerHeight;
+		}
+
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
+		
+		// Загрузка фонового изображения
+const backgroundImage = new Image();
+backgroundImage.src = './images/underwater.png'; // Замените 'background.png' на имя вашего изображения
+
+const fishImage = new Image();
+fishImage.src = './images/fish.png'; // Замените 'fish.png' на путь к вашему изображению рыбки
+
+const foodBackgroundImage = new Image();
+foodBackgroundImage.src = './images/food_background.png'; // Замените 'food_background.png' на путь к вашему изображению
+
+
+backgroundImage.onload = function() {
+    drawBackground(); // Вызываем функцию после загрузки изображения
+};
+
+function drawBackground() {
+    ctx.drawImage(backgroundImage, 0, 0, canvas.width, canvas.height);
+}
+
+        class FoodParticle {
+            constructor() {
+                this.position = {
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * canvas.height
+                };
+                this.velocity = {
+                    x: (Math.random() * 2 - 1) * 1.5,
+                    y: (Math.random() * 2 - 1) * 1.5
+                };
+                this.lastDirectionChange = Date.now();
+                this.directionChangeInterval = 2000 + Math.random() * 2000;
+            }
+
+            update() {
+                // Случайное изменение направления
+                if (Date.now() - this.lastDirectionChange > this.directionChangeInterval) {
+                    this.velocity.x += (Math.random() * 2 - 1) * 0.5;
+                    this.velocity.y += (Math.random() * 2 - 1) * 0.5;
+                    // Ограничение скорости
+                    let speed = Math.sqrt(this.velocity.x ** 2 + this.velocity.y ** 2);
+                    if (speed > 1.5) {
+                        this.velocity.x = (this.velocity.x / speed) * 1.5;
+                        this.velocity.y = (this.velocity.y / speed) * 1.5;
+                    }
+                    this.lastDirectionChange = Date.now();
+                    this.directionChangeInterval = 2000 + Math.random() * 2000;
+                }
+
+                this.position.x += this.velocity.x;
+                this.position.y += this.velocity.y;
+
+                // Отражение от границ
+                if (this.position.x < 0 || this.position.x > canvas.width) this.velocity.x *= -1;
+                if (this.position.y < 0 || this.position.y > canvas.height) this.velocity.y *= -1;
+
+                this.position.x = Math.max(0, Math.min(canvas.width, this.position.x));
+                this.position.y = Math.max(0, Math.min(canvas.height, this.position.y));
+            }
+
+    draw() {
+        const foodRadius = 8; // Радиус круга еды
+        ctx.beginPath();
+        ctx.arc(this.position.x, this.position.y, foodRadius, 0, Math.PI * 2);
+        if (foodBackgroundImage.complete) { // Проверяем, загрузилось ли изображение
+            ctx.save(); // Сохраняем текущее состояние контекста
+            ctx.translate(this.position.x, this.position.y); // Перемещаем начало координат в центр круга
+            const patternSize = 20; // Размер изображения фона еды
+            const offsetX = -patternSize / 2; // Смещение по X
+            const offsetY = -patternSize / 2; // Смещение по Y
+            ctx.drawImage(foodBackgroundImage, offsetX, offsetY, patternSize, patternSize); // Рисуем фон
+            ctx.restore(); // Восстанавливаем состояние контекста
+        } else {
+            ctx.fillStyle = '#00ff00'; // Если изображение не загрузилось, используем зеленый цвет
+            ctx.fill();
+        }
+        ctx.closePath();
+    }        }
+
+        class Boid {
+            constructor() {
+                this.position = {
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * canvas.height
+                };
+                this.velocity = {
+                    x: (Math.random() * 2 - 1) * 2,
+                    y: (Math.random() * 2 - 1) * 2
+                };
+                this.acceleration = { x: 0, y: 0 };
+                this.maxSpeed = 4;
+                this.maxForce = 0.2;
+                this.size = 4;
+                this.perceptionRadius = 45;
+                this.targetFood = null;
+            }
+
+            findClosestFood(foodParticles) {
+                let closestDist = Infinity;
+                let closest = null;
+                
+                for (let food of foodParticles) {
+                    let d = dist(this.position, food.position);
+                    if (d < closestDist) {
+                        closestDist = d;
+                        closest = food;
+                    }
+                }
+                
+                return closest;
+            }
+
+            align(boids) {
+                let steering = { x: 0, y: 0 };
+                let total = 0;
+                
+                for (let other of boids) {
+                    let d = dist(this.position, other.position);
+                    if (other !== this && d < this.perceptionRadius && other.targetFood === this.targetFood) {
+                        steering.x += other.velocity.x;
+                        steering.y += other.velocity.y;
+                        total++;
+                    }
+                }
+                
+                if (total > 0) {
+                    steering.x /= total;
+                    steering.y /= total;
+                    steering = normalize(steering, this.maxSpeed);
+                    steering.x -= this.velocity.x;
+                    steering.y -= this.velocity.y;
+                    steering = limit(steering, this.maxForce);
+                }
+                return steering;
+            }
+
+            cohesion(boids) {
+                let steering = { x: 0, y: 0 };
+                let total = 0;
+                
+                for (let other of boids) {
+                    let d = dist(this.position, other.position);
+                    if (other !== this && d < this.perceptionRadius && other.targetFood === this.targetFood) {
+                        steering.x += other.position.x;
+                        steering.y += other.position.y;
+                        total++;
+                    }
+                }
+                
+                if (total > 0) {
+                    steering.x /= total;
+                    steering.y /= total;
+                    steering.x -= this.position.x;
+                    steering.y -= this.position.y;
+                    steering = normalize(steering, this.maxSpeed);
+                    steering.x -= this.velocity.x;
+                    steering.y -= this.velocity.y;
+                    steering = limit(steering, this.maxForce);
+                }
+                return steering;
+            }
+
+            separation(boids) {
+                let steering = { x: 0, y: 0 };
+                let total = 0;
+                
+                for (let other of boids) {
+                    let d = dist(this.position, other.position);
+                    if (other !== this && d < this.perceptionRadius) {
+                        let diff = {
+                            x: this.position.x - other.position.x,
+                            y: this.position.y - other.position.y
+                        };
+                        diff = normalize(diff, 1/d);
+                        steering.x += diff.x;
+                        steering.y += diff.y;
+                        total++;
+                    }
+                }
+                
+                if (total > 0) {
+                    steering.x /= total;
+                    steering.y /= total;
+                    steering = normalize(steering, this.maxSpeed);
+                    steering.x -= this.velocity.x;
+                    steering.y -= this.velocity.y;
+                    steering = limit(steering, this.maxForce);
+                }
+                return steering;
+            }
+
+            seek(target) {
+                let desired = {
+                    x: target.x - this.position.x,
+                    y: target.y - this.position.y
+                };
+                desired = normalize(desired, this.maxSpeed);
+                
+                let steering = {
+                    x: desired.x - this.velocity.x,
+                    y: desired.y - this.velocity.y
+                };
+                steering = limit(steering, this.maxForce);
+                return steering;
+            }
+
+            update(boids, foodParticles) {
+                // Найти ближайшую еду если её нет
+                if (!this.targetFood || !foodParticles.includes(this.targetFood)) {
+                    this.targetFood = this.findClosestFood(foodParticles);
+                }
+                
+                // Рассчитать силы стаи
+                let alignment = this.align(boids);
+                let cohesion = this.cohesion(boids);
+                let separation = this.separation(boids);
+                
+                // Следовать за едой
+                let seekForce = this.targetFood ? 
+                    this.seek(this.targetFood.position) : 
+                    { x: 0, y: 0 };
+                
+                // Применить все силы с весами
+                this.acceleration.x += alignment.x * 1;
+                this.acceleration.y += alignment.y * 1;
+                this.acceleration.x += cohesion.x * 0.5;
+                this.acceleration.y += cohesion.y * 0.5;
+                this.acceleration.x += separation.x * 1.5;
+                this.acceleration.y += separation.y * 1.5;
+                this.acceleration.x += seekForce.x * 2;
+                this.acceleration.y += seekForce.y * 2;
+
+                // Обновить позицию и скорость
+                this.velocity.x += this.acceleration.x;
+                this.velocity.y += this.acceleration.y;
+                this.velocity = limit(this.velocity, this.maxSpeed);
+                
+                this.position.x += this.velocity.x;
+                this.position.y += this.velocity.y;
+                
+                // Отражение от границ
+                if (this.position.x > canvas.width) {
+                    this.position.x = canvas.width;
+                    this.velocity.x *= -1;
+                }
+                if (this.position.x < 0) {
+                    this.position.x = 0;
+                    this.velocity.x *= -1;
+                }
+                if (this.position.y > canvas.height) {
+                    this.position.y = canvas.height;
+                    this.velocity.y *= -1;
+                }
+                if (this.position.y < 0) {
+                    this.position.y = 0;
+                    this.velocity.y *= -1;
+                }
+                
+                // Сбросить ускорение
+                this.acceleration.x = 0;
+                this.acceleration.y = 0;
+            }
+
+            draw() {
+                let angle = Math.atan2(this.velocity.y, this.velocity.x);
+                
+        ctx.save();
+        ctx.translate(this.position.x, this.position.y);
+        ctx.rotate(angle);
+
+        // Рисуем изображение рыбки
+        const imageWidth = this.size * 7; // Ширина изображения
+        const imageHeight = this.size * 3; // Высота изображения
+        ctx.drawImage(fishImage, -imageWidth / 2, -imageHeight / 2, imageWidth, imageHeight);
+
+        ctx.restore();
+            }
+        }
+
+        // Helper functions
+        function dist(p1, p2) {
+            return Math.sqrt((p2.x - p1.x) ** 2 + (p2.y - p1.y) ** 2);
+        }
+
+        function normalize(vector, scale = 1) {
+            let length = Math.sqrt(vector.x ** 2 + vector.y ** 2);
+            if (length > 0) {
+                return {
+                    x: (vector.x / length) * scale,
+                    y: (vector.y / length) * scale
+                };
+            }
+            return vector;
+        }
+
+        function limit(vector, max) {
+            let length = Math.sqrt(vector.x ** 2 + vector.y ** 2);
+            if (length > max) {
+                vector.x = (vector.x / length) * max;
+                vector.y = (vector.y / length) * max;
+            }
+            return vector;
+        }
+
+        // Initialize
+        const boids = Array(100).fill().map(() => new Boid());
+        let foodParticles = [new FoodParticle()];
+        let lastFoodCheck = Date.now();
+
+        function manageFoodParticles() {
+            // Удалить еду, которую достигли боиды
+            foodParticles = foodParticles.filter(food => {
+                let closeBoidsCount = boids.filter(boid => 
+                    dist(boid.position, food.position) < 10
+                ).length;
+                return closeBoidsCount < 3;
+            });
+
+            // Добавить новую еду если нужно
+            if (Date.now() - lastFoodCheck > 5000) {
+                let targetCount = Math.floor(Math.random() * 3) + 1;
+                while (foodParticles.length < targetCount) {
+                    foodParticles.push(new FoodParticle());
+                }
+                lastFoodCheck = Date.now();
+            }
+        }
+
+        function draw() {
+            // Clear canvas
+            //ctx.fillStyle = '#00134d';
+            //ctx.fillRect(0, 0, canvas.width, canvas.height);
+			drawBackground(); // Рисуем фон
+            // Обновить и нарисовать еду
+            for (let food of foodParticles) {
+                food.update();
+                food.draw();
+            }
+
+            // Обновить и нарисовать боидов
+            for (let boid of boids) {
+                boid.update(boids, foodParticles);
+                boid.draw();
+            }
+
+            // Управление едой
+            manageFoodParticles();
+
+            requestAnimationFrame(draw);
+        }
+
+        draw();
+
+        // Resize handler
+        window.addEventListener('resize', () => {
+            canvas.width = window.innerWidth - 40;
+            canvas.height = window.innerHeight - 40;
+        });
+    </script>
+</body>
+</html>
